@@ -214,6 +214,16 @@ export interface ExecutionOptions {
 	 * persistence-backed CheckpointStore; recover via `crashResume()`.
 	 */
 	stepCheckpoints?: boolean;
+	/**
+	 * Maximum number of automatic retries when a model turn produces no visible
+	 * text and no tool calls (empty completion). Each retry injects a corrective
+	 * instruction before re-calling the model. Unset by default — no retry.
+	 * Set by hosts that need deterministic non-silent completion (e.g. the
+	 * Instance AI workflow builder). When configured, retries count toward the
+	 * normal `maxIterations` cap. Provider errors, abort signals, and
+	 * content-filter failures are not retried.
+	 */
+	emptyCompletionRetries?: number;
 }
 
 export interface PersistedExecutionOptions {

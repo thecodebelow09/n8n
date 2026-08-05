@@ -73,6 +73,11 @@ export const enum AgentEvent {
 	SubAgentCompleted = 'subagent_completed',
 	SubAgentChunk = 'subagent_chunk',
 	Error = 'error',
+	/**
+	 * Emitted when a model turn ends with `stop` or `length` but no visible text
+	 * and no tool calls, and the runtime is retrying with a corrective instruction.
+	 */
+	EmptyCompletion = 'empty_completion',
 }
 
 export type AgentEventData =
@@ -101,6 +106,25 @@ export type AgentEventData =
 				| 'episodic-memory'
 				| 'input-persistence'
 				| 'turn-delta-persistence';
+	  }
+	| {
+			type: AgentEvent.EmptyCompletion;
+			/** 1-based corrective retry number being scheduled. */
+			retryNumber: number;
+			/** Maximum retries configured. */
+			maxRetries: number;
+			/** The normalized finish reason that triggered this retry. */
+			finishReason: string;
+			/** Current 0-based iteration count. */
+			iteration: number;
+			/** Number of tool calls in the empty turn. */
+			toolCallCount: number;
+			/** Length of visible text in the empty turn. Always 0 for empty completions. */
+			visibleTextLength: number;
+			/** Prompt token count, when available. */
+			promptTokens?: number;
+			/** Completion token count, when available. */
+			completionTokens?: number;
 	  };
 
 export type AgentEventHandler = (data: AgentEventData) => void;

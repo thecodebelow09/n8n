@@ -136,3 +136,88 @@ export function mergeUsage(
 
 	return merged;
 }
+
+// ---------------------------------------------------------------------------
+// Empty completion detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Valid empty-completion finish reasons — these indicate the model chose to
+ * stop without requesting tool use, not that the provider filtered or rejected
+ * the request. `stop` / `length` with zero output are the model's own (odd but
+ * legal) choice. `tool-calls` always carries calls and is never empty.
+ * `error` surfaces as a thrown error instead.
+ *
+ * `other` / `unknown` / `content-filter` are already handled by
+ * `classifyModelTurnError` as provider-side failures and must NOT be retried.
+ */
+const EMPTY_COMPLETION_FINISH_REASONS = new Set(['stop', 'length']);
+
+/**
+ * Visible text content types — excludes hidden reasoning and metadata blocks.
+ * Only `text` blocks are user-visible final output.
+ */
+const VISIBLE_CONTENT_TYPES = new Set(['text']);
+
+/**
+ * Returns true when a model turn ended without producing any user-visible
+ * content (no text blocks) and without issuing tool calls, AND the finish
+ * reason is one that indicates the model's own choice rather than a
+ * provider-side failure. Used to trigger automatic corrective retry.
+ *
+ * Hidden reasoning content does NOT count as visible output — a model that
+ * thinks silently and ends with no text/tool-call is still an empty completion.
+ *
+ * Finish reasons already classified as provider errors (`other`, `unknown`,
+ * `content-filter`) are handled by `classifyModelTurnError` and must NOT be
+ * retried as empty completions.
+ */
+export function isEmptyCompletion(turn: {
+	aiFinishReason: string;
+	newMessages: AgentMessage[];
+	toolCalls: readonly unknown[];
+}): boolean {
+	// Only `stop` and `length` can be retried as empty completions.
+	// `tool-calls` always has calls; `error` surfaces as a thrown error;
+	// `other`/`unknown`/`content-filter` are already provider-error-classified.
+	if (!EMPTY_COMPLETION_FINISH_REASONS.has(turn.aiFinishReason)) return false;
+
+	// A model that produced tool calls is not empty — it just finished them.
+	if (turn.toolCalls.length > 0) return false;
+
+	// Check for visible (non-reasoning) text content.
+	const hasVisibleText = turn.newMessages.some((m) =>
+		'content' in m && Array.isArray(m.content)
+			? m.content.some(
+					(c) =>
+						typeof c === 'object' &&
+						c !== null &&
+						VISIBLE_CONTENT_TYPES.has((c as { type: string }).type),
+				)
+			: false,
+	);
+
+	return !hasVisibleText;
+}
+
+/** Normalized finish reason string for diagnostic logging. */
+export function normalizeFinishReason(reason: string): string {
+	return reason ?? 'unknown';
+}
+
+/**
+ * Structured diagnostic fields logged when an empty completion is detected.
+ * No prompt bodies, tool payloads, credentials, workflow JSON, or hidden
+ * reasoning are included.
+ */
+export interface EmptyCompletionDiagnostic {
+	modelId: string;
+	finishReason: string;
+	iteration: number;
+	toolCallCount: number;
+	visibleTextLength: number;
+	emptyCompletionRetryNumber: number;
+	maxRetries: number;
+	promptTokens?: number;
+	completionTokens?: number;
+}

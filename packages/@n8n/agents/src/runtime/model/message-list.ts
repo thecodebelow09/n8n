@@ -364,4 +364,24 @@ export class AgentMessageList {
 		list.sortAllByCreatedAt();
 		return list;
 	}
+
+	/**
+	 * Remove and return the last `count` response messages added to this turn.
+	 * Used to discard hidden reasoning or metadata from an empty completion before
+	 * a corrective retry. Passing zero is a no-op, so a truly message-less empty
+	 * completion cannot accidentally remove an earlier valid assistant response.
+	 */
+	removeLastResponseBatch(count: number): AgentDbMessage[] {
+		if (!Number.isInteger(count) || count <= 0) return [];
+
+		const responseMessages = this.all.filter((message) => this.responseSet.has(message));
+		const removed = responseMessages.slice(-count);
+		if (removed.length === 0) return removed;
+
+		const removedSet = new Set(removed);
+		this.all = this.all.filter((message) => !removedSet.has(message));
+		for (const message of removed) this.responseSet.delete(message);
+		this.sortAllByCreatedAt();
+		return removed;
+	}
 }

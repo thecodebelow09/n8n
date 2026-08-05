@@ -7359,4 +7359,318 @@ describe('AgentRuntime — MCP connection failure warnings', () => {
 
 		expect(systemText).not.toContain('<mcp-connection-status>');
 	});
+
+	// ---------------------------------------------------------------------------
+	// Empty completion guard
+	// ---------------------------------------------------------------------------
+
+	describe('AgentRuntime — empty completion guard', () => {
+		/**
+		 * Isolated helper: reset mocks, set up a fresh mock sequence, run generate,
+		 * and return the result plus call count. Each test gets its own mock state.
+		 */
+		async function runWithMocks(opts: {
+			mocks: unknown[];
+			execOpts?: Record<string, unknown>;
+		}): Promise<{ result: import('../../types/sdk/agent').GenerateResult; calls: number }> {
+			generateText.mockReset();
+			streamText.mockReset(); // Reset streamText too — MCP tests above leave a lingering mockReturnValue
+			for (const mockResponse of opts.mocks) {
+				generateText.mockResolvedValueOnce(mockResponse);
+			}
+			const { runtime } = createRuntime();
+			const result = await runtime.generate(
+				'hello',
+				opts.execOpts as Parameters<typeof runtime.generate>[1],
+			);
+			return { result, calls: generateText.mock.calls.length };
+		}
+
+		/** Empty generate response (zero output, zero tool calls). */
+		function emptyGen(finishReason = 'stop'): unknown {
+			return {
+				finishReason,
+				usage: { inputTokens: 10, outputTokens: 0, totalTokens: 10 },
+				response: { messages: [] },
+				toolCalls: [],
+			};
+		}
+
+		/** Text generate response. */
+		function textGen(text = 'done'): unknown {
+			return {
+				finishReason: 'stop',
+				usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+				response: {
+					messages: [{ role: 'assistant', content: [{ type: 'text', text }] }],
+				},
+				toolCalls: [],
+			};
+		}
+
+		// 1. Empty completion with finish reason 'stop' triggers one retry
+		it('empty completion with finish reason stop triggers one retry', async () => {
+			const { result, calls } = await runWithMocks({
+				mocks: [emptyGen('stop'), textGen('retry succeeded')],
+				execOpts: { maxIterations: 3, emptyCompletionRetries: 2 },
+			});
+			expect(calls).toBe(2);
+			expect(result.finishReason).toBe('stop');
+		});
+
+		// 2. Empty completion with finish reason 'length' triggers one retry
+		it('empty completion with finish reason length triggers one retry', async () => {
+			const { result, calls } = await runWithMocks({
+				mocks: [emptyGen('length'), textGen()],
+				execOpts: { maxIterations: 3, emptyCompletionRetries: 2 },
+			});
+			expect(calls).toBe(2);
+			expect(result.finishReason).toBe('stop');
+		});
+
+		// 3. Visible text does not trigger a retry
+		it('visible text does not trigger a retry', async () => {
+			const { result, calls } = await runWithMocks({
+				mocks: [textGen('Hello world')],
+				execOpts: { maxIterations: 3, emptyCompletionRetries: 2 },
+			});
+			expect(calls).toBe(1);
+			expect(result.finishReason).toBe('stop');
+		});
+
+		// 4. An abort signal prevents retry
+		it('an abort signal prevents retry', async () => {
+			const controller = new AbortController();
+			generateText.mockReset();
+			generateText.mockImplementationOnce(async (_opts: { abortSignal?: AbortSignal }) => {
+				// Abort immediately so the test runs quickly
+				controller.abort();
+				// Give the runtime a moment to register the abort
+				await new Promise((r) => setTimeout(r, 10));
+				throw new Error('aborted');
+			});
+			const { runtime } = createRuntime();
+			const result = await runtime.generate('hello', {
+				maxIterations: 3,
+				emptyCompletionRetries: 2,
+				abortSignal: controller.signal,
+			});
+			// The abort throws before a retry can be issued
+			expect(generateText.mock.calls.length).toBe(1);
+			expect(result.finishReason).toBe('error');
+		});
+
+		// 5. Existing provider errors retain their current handling
+		it('existing provider errors retain their current handling', async () => {
+			generateText.mockReset();
+			generateText.mockImplementation(() => Promise.reject(new Error('API failure')));
+			const { runtime } = createRuntime();
+			const result = await runtime.generate('hello', {
+				maxIterations: 3,
+				emptyCompletionRetries: 2,
+			});
+			expect(generateText.mock.calls.length).toBe(1);
+			expect(result.finishReason).toBe('error');
+		});
+
+		// 6. Retry exhaustion produces a clear error
+		it('retry exhaustion produces a clear error after max retries are used', async () => {
+			// maxRetries=2: original empty + retry1 + retry2 = 3 calls, then throw
+			const { result, calls } = await runWithMocks({
+				mocks: [emptyGen('stop'), emptyGen('stop'), emptyGen('stop')],
+				execOpts: { maxIterations: 10, emptyCompletionRetries: 2 },
+			});
+			expect(calls).toBe(3);
+			expect(result.finishReason).toBe('error');
+			expect(String(result.error)).toContain('no visible output');
+			expect(String(result.error)).toContain('corrective retry');
+			expect(String(result.error)).toContain('2');
+		});
+
+		// 7. With maxRetries=1 exactly one retry is attempted
+		it('with maxRetries=1 exactly one retry is attempted', async () => {
+			const { result, calls } = await runWithMocks({
+				mocks: [emptyGen('stop'), textGen('fixed')],
+				execOpts: { maxIterations: 5, emptyCompletionRetries: 1 },
+			});
+			expect(calls).toBe(2);
+			expect(result.finishReason).toBe('stop');
+		});
+
+		// 8. Cannot create an infinite loop — maxIterations is the hard cap
+		it('cannot create an infinite loop — stops at maxIterations even with retries remaining', async () => {
+			// maxIterations=3, maxRetries=10:
+			// iter 0 (empty) → retry1 → iter 1 (empty) → retry2 → iter 2 (empty) → loop exit
+			const { result, calls } = await runWithMocks({
+				mocks: [emptyGen('stop'), emptyGen('stop'), emptyGen('stop')],
+				execOpts: { maxIterations: 3, emptyCompletionRetries: 10 },
+			});
+			expect(calls).toBe(3);
+			expect(result.finishReason).toBe('max-iterations');
+		});
+
+		// 9. Corrective instruction is not visible as a user message
+		it('the corrective instruction is not emitted as visible user message', async () => {
+			const { result } = await runWithMocks({
+				mocks: [emptyGen('stop'), textGen('fixed')],
+				execOpts: { maxIterations: 3, emptyCompletionRetries: 2 },
+			});
+			expect(result.finishReason).toBe('stop');
+			const userMessages = result.messages.filter((m) => (m as { role?: string }).role === 'user');
+			const correctiveTexts = userMessages.filter((m) => {
+				const content = (m as { content?: unknown }).content;
+				if (!Array.isArray(content)) return false;
+				return content.some(
+					(c) =>
+						typeof c === 'object' &&
+						c !== null &&
+						(c as { type?: string }).type === 'text' &&
+						typeof (c as { text?: string }).text === 'string' &&
+						(c as { text: string }).text.includes('previous turn ended without'),
+				);
+			});
+			expect(correctiveTexts).toHaveLength(0);
+		});
+
+		// 10. Diagnostic event emitted with correct fields
+		it('emits EmptyCompletion event with diagnostic fields (no prompt content)', async () => {
+			// Use a shared runtime so we can listen on its event bus.
+			const { runtime, bus } = createRuntime();
+			const emptyEvents: unknown[] = [];
+			bus.on(AgentEvent.EmptyCompletion, (e) => emptyEvents.push(e));
+
+			// Prepare mocks directly on generateText (runWithMocks would create a new runtime).
+			generateText.mockReset();
+			generateText.mockResolvedValueOnce(emptyGen('stop')).mockResolvedValueOnce(textGen());
+
+			const result = await runtime.generate('hello', {
+				maxIterations: 3,
+				emptyCompletionRetries: 2,
+			});
+
+			expect(result.finishReason).toBe('stop');
+			expect(emptyEvents).toHaveLength(1);
+			const ev = emptyEvents[0] as Record<string, unknown>;
+			expect(ev.type).toBe(AgentEvent.EmptyCompletion);
+			expect(ev.retryNumber).toBe(1);
+			expect(ev.maxRetries).toBe(2);
+			expect(ev.finishReason).toBe('stop');
+			expect(ev.iteration).toBe(0);
+			expect(ev.toolCallCount).toBe(0);
+			expect(ev.visibleTextLength).toBe(0);
+			expect(JSON.stringify(ev)).not.toContain('hello');
+			expect(JSON.stringify(ev)).not.toContain('secret');
+		});
+
+		// 11. Generic runtime defaults to zero retries (no retry without option)
+		it('generic runtime does not retry when emptyCompletionRetries is absent', async () => {
+			const { result, calls } = await runWithMocks({
+				mocks: [emptyGen('stop')],
+				execOpts: {},
+			});
+			expect(calls).toBe(1);
+			expect(result.finishReason).toBe('stop');
+		});
+
+		// 12. Corrective instruction is prepended to existing volatile instructions
+		it('the corrective instruction is prepended to existing volatile instructions', async () => {
+			await runWithMocks({
+				mocks: [emptyGen('stop'), textGen()],
+				execOpts: { maxIterations: 3, emptyCompletionRetries: 2 },
+			});
+			// Inspect the second (retry) call's instructions
+			const retryCallArgs = generateText.mock.calls[1]![0] as Record<string, unknown>;
+			const instructions = retryCallArgs.instructions;
+			const text = Array.isArray(instructions)
+				? instructions.map((e) => String((e as { content?: string }).content ?? '')).join('')
+				: String((instructions as { content?: string }).content ?? '');
+
+			// Corrective instruction must appear
+			expect(text).toContain('previous turn ended without');
+			expect(text).toContain('Continue the current builder task now');
+		});
+
+		// 13. Tool execution after retry resets retry counter for the next turn
+		it('tool execution after retry resets retry counter for the next turn', async () => {
+			generateText.mockReset();
+			generateText
+				.mockResolvedValueOnce(emptyGen('stop'))
+				.mockResolvedValueOnce({
+					finishReason: 'tool-calls',
+					usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+					response: {
+						messages: [
+							{
+								role: 'assistant',
+								content: [
+									{
+										type: 'tool-call',
+										toolCallId: 'call-1',
+										toolName: 'test-tool',
+										input: {},
+									},
+								],
+							},
+						],
+					},
+					toolCalls: [{ toolCallId: 'call-1', toolName: 'test-tool', input: {} }],
+				})
+				.mockResolvedValueOnce(emptyGen('stop'))
+				.mockResolvedValueOnce(textGen());
+
+			const { bus } = createRuntime();
+			const testTool = new ToolBuilder('test-tool')
+				.description('test')
+				.input(z.object({}))
+				.handler(async () => ({ result: 'ok' }))
+				.build();
+			const toolRuntime = new AgentRuntime({
+				name: 'test-retry-reset',
+				model: 'openai/gpt-4o-mini',
+				instructions: 'You are a test assistant.',
+				tools: [testTool],
+				eventBus: bus,
+			});
+			const result = await toolRuntime.generate('hello', {
+				maxIterations: 4,
+				emptyCompletionRetries: 1,
+			});
+
+			// original empty → corrective tool call → ordinary empty → corrective text
+			expect(generateText.mock.calls.length).toBe(4);
+			expect(result.finishReason).toBe('stop');
+
+			const ordinaryPostToolCall = generateText.mock.calls[2]![0] as Record<string, unknown>;
+			const ordinaryInstructions = JSON.stringify(ordinaryPostToolCall.instructions) ?? '';
+			expect(ordinaryInstructions).not.toContain('previous turn ended without');
+
+			const secondRetryCall = generateText.mock.calls[3]![0] as Record<string, unknown>;
+			const secondRetryInstructions = JSON.stringify(secondRetryCall.instructions) ?? '';
+			expect(secondRetryInstructions).toContain('previous turn ended without');
+		});
+
+		// 14. Original empty + 2 retries = 3 iterations consumed
+		it('original empty + 2 retries consume 3 iterations', async () => {
+			const { result, calls } = await runWithMocks({
+				mocks: [emptyGen('stop'), emptyGen('stop'), emptyGen('stop')],
+				execOpts: { maxIterations: 3, emptyCompletionRetries: 2 },
+			});
+			expect(calls).toBe(3);
+			expect(result.finishReason).toBe('error');
+		});
+
+		// 15. maxIterations is the hard cap
+		it('runtime stops at maxIterations even when corrective retries remain', async () => {
+			// maxIterations=2, maxRetries=10:
+			// iter 0 (empty, retry1) → loop condition 1<2 true → continue
+			// iter 1 (empty, retry2) → loop condition 2<2 false → exit with finishReason='max-iterations'
+			const { result, calls } = await runWithMocks({
+				mocks: [emptyGen('stop'), emptyGen('stop')],
+				execOpts: { maxIterations: 2, emptyCompletionRetries: 10 },
+			});
+			expect(calls).toBe(2);
+			// Loop exits because iterationCount reaches maxIterations.
+			expect(result.finishReason).toBe('max-iterations');
+		});
+	});
 });

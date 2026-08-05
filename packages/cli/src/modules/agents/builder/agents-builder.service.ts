@@ -282,6 +282,16 @@ export class AgentsBuilderService {
 		const renderTokenBudget = readPositiveIntegerEnv('N8N_AI_BUILDER_MEMORY_RENDER_TOKENS', 7_000);
 		const maxIterations = readPositiveIntegerEnv('N8N_AI_BUILDER_MAX_ITERATIONS', 30);
 
+		// Guard against silent empty completions: retry with a corrective instruction.
+		// Only positive integers override the default of 2. Invalid values (missing, empty,
+		// non-numeric, zero, negative, non-integer) all fall back to 2.
+		const emptyCompletionRetries = (() => {
+			const raw = process.env['N8N_AI_BUILDER_EMPTY_COMPLETION_RETRIES'];
+			if (!raw) return 2;
+			const parsed = Number(raw);
+			return Number.isInteger(parsed) && parsed > 0 ? parsed : 2;
+		})();
+
 		const builderMemory = new Memory()
 			.storage(this.n8nMemory.getImplementation(agentId))
 			.observationalMemory({
@@ -308,6 +318,7 @@ export class AgentsBuilderService {
 			.checkpoint(this.n8nCheckpointStorage.getStorage(agentId))
 			.configuration({
 				maxIterations,
+				emptyCompletionRetries,
 				contextBudget: {
 					maxInputTokens,
 					maxToolResultTokens,

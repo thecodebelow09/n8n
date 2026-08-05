@@ -11,9 +11,11 @@ import { RuntimeContextBuilder, getModelIdString } from './runtime-context';
 import {
 	extractSettledToolCalls,
 	formatMcpConnectionNote,
+	isEmptyCompletion,
 	makeErrorStream,
 	mergeUsage,
 	normalizeInput,
+	normalizeFinishReason,
 } from './runtime-helpers';
 import { StreamSink } from './stream-sink';
 import { isCancellation } from '../../sdk/cancellation';
@@ -132,6 +134,16 @@ export interface AgentRuntimeConfig {
 	 * aborting the run.
 	 */
 	mcpConnectionFailures?: McpConnectionFailedEvent[];
+	/**
+	 * Maximum number of automatic empty-completion retries for a single agent
+	 * turn. An empty completion is a model turn that ends with `stop` or
+	 * `length` but produces no visible text and no tool calls — the model's
+	 * own choice, not a provider error. Each retry injects a corrective
+	 * instruction before re-calling the model. When `undefined` (default),
+	 * no retry is attempted. Intended for hosts (e.g. Instance AI builder)
+	 * that need deterministic non-silent completion.
+	 */
+	emptyCompletionRetries?: number;
 }
 
 const MAX_LOOP_ITERATIONS = 30;
@@ -184,7 +196,6 @@ export class AgentRuntime {
 	private runId: string;
 
 	private telemetry: RuntimeTelemetry;
-
 	private memory: MemoryOrchestrator;
 
 	private context: RuntimeContextBuilder;
@@ -751,6 +762,15 @@ export class AgentRuntime {
 			this.config.instructionProviderOptions,
 		);
 		const maxIterations = options?.maxIterations ?? MAX_LOOP_ITERATIONS;
+		const configuredEmptyCompletionRetries =
+			this.config.emptyCompletionRetries ?? options?.emptyCompletionRetries ?? 0;
+		const emptyCompletionMaxRetries = Number.isFinite(configuredEmptyCompletionRetries)
+			? Math.max(0, Math.floor(configuredEmptyCompletionRetries))
+			: 0;
+		// Consecutive corrective retries used since the most recent successful tool turn.
+		let emptyCompletionRetriesUsed = 0;
+		// One-shot corrective instruction for the next model call only.
+		let correctiveInstruction: string | undefined;
 		let iterationCount = options?.iterationCount ?? 0;
 		let reachedStopCondition = false;
 
@@ -845,10 +865,22 @@ export class AgentRuntime {
 				options?.persistence,
 				options?.executionCounter,
 			);
+			// Consume the corrective instruction once and prepend it to any existing
+			// volatile instructions for this model call only.
+			const retryInstruction = correctiveInstruction;
+			correctiveInstruction = undefined;
+			const combinedVolatileInstructions = retryInstruction
+				? volatileInstructions
+					? `${retryInstruction}
+
+${volatileInstructions}`
+					: retryInstruction
+				: volatileInstructions;
+
 			const { system, messages } = list.forLlm(
 				effectiveInstructions,
 				instructionProviderOptions,
-				volatileInstructions,
+				combinedVolatileInstructions,
 				options?.contextBudget,
 				aiTools,
 			);
@@ -886,9 +918,47 @@ export class AgentRuntime {
 
 			lastFinishReason = turn.finishReason;
 			list.addResponse(turn.newMessages);
+			const turnIsEmpty = isEmptyCompletion(turn);
 			// The turn is now in the list; drop any retained streamed text so a later
 			// abort's snapshot can't duplicate it (a stop before this point recovers it).
 			sink.onTurnFolded?.();
+
+			// Detect empty completion: model ended with stop/length but no visible text
+			// and no tool calls. Retry with a one-shot corrective instruction when both
+			// the retry budget and the ordinary iteration budget allow another call.
+			if (turnIsEmpty && emptyCompletionMaxRetries > 0) {
+				// Remove only messages added by this empty turn. A zero-message completion
+				// must never remove an earlier valid assistant response.
+				list.removeLastResponseBatch(turn.newMessages.length);
+
+				if (emptyCompletionRetriesUsed >= emptyCompletionMaxRetries) {
+					throw new Error(
+						`Builder model repeatedly returned no visible output and no tool call after ${emptyCompletionMaxRetries} corrective retry(s). The task could not be completed.`,
+					);
+				}
+
+				// maxIterations remains the hard cap. If no model-call budget remains,
+				// let the loop terminate with the normal max-iterations finish reason.
+				if (iterationCount + 1 >= maxIterations) continue;
+
+				const retryNumber = emptyCompletionRetriesUsed + 1;
+				this.eventBus.emit({
+					type: AgentEvent.EmptyCompletion,
+					retryNumber,
+					maxRetries: emptyCompletionMaxRetries,
+					finishReason: normalizeFinishReason(turn.aiFinishReason),
+					iteration: iterationCount,
+					toolCallCount: turn.toolCalls?.length ?? 0,
+					visibleTextLength: 0,
+					promptTokens: turn.usage?.promptTokens,
+					completionTokens: turn.usage?.completionTokens,
+				});
+
+				emptyCompletionRetriesUsed = retryNumber;
+				correctiveInstruction =
+					'Your previous turn ended without producing a user-visible response or calling a tool. Continue the current builder task now. If work remains, call the appropriate builder tool. If the task is complete, provide a concise final confirmation describing what changed. Do not end the turn without either a tool call or visible final text.';
+				continue;
+			}
 
 			if (turn.aiFinishReason !== 'tool-calls') {
 				// A rejected/filtered request (e.g. a provider prompt safety block)
@@ -900,6 +970,9 @@ export class AgentRuntime {
 				reachedStopCondition = true;
 				break;
 			}
+
+			// A valid tool-calling turn ends the consecutive empty-completion sequence.
+			emptyCompletionRetriesUsed = 0;
 
 			const batch = await this.toolExecutor.iterateToolCallsConcurrent({
 				...buildToolBatchContext(toolMap),
