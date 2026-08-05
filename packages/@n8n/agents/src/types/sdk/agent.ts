@@ -175,8 +175,19 @@ export interface AgentExecutionCounter {
 	incrementTokenCount(tokenCount: number): void;
 }
 
+export interface ContextBudgetOptions {
+	/** Approximate ceiling for system prompt, observation memory, tool schemas, and messages combined. */
+	maxInputTokens: number;
+	/** Maximum size retained inline for one resolved tool output. */
+	maxToolResultTokens?: number;
+	/** Preserve this many newest complete user turns, compacting them when necessary. */
+	minimumRecentTurns?: number;
+}
+
 export interface ExecutionOptions {
 	maxIterations?: number;
+	/** Adaptive, non-destructive prompt budgeting applied before every model call. */
+	contextBudget?: ContextBudgetOptions;
 	abortSignal?: AbortSignal;
 	providerOptions?: ProviderOptions;
 	/** AI SDK `smoothStream` transform. Enabled by default; pass `false` to disable. */

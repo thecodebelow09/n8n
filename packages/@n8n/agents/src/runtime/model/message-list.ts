@@ -1,9 +1,11 @@
 import type { ProviderOptions } from '@ai-sdk/provider-utils';
-import type { ModelMessage, SystemModelMessage } from 'ai';
+import type { ModelMessage, SystemModelMessage, ToolSet } from 'ai';
 
+import { budgetAgentMessages } from './context-budget';
 import { toAiMessages } from './messages';
 import { filterLlmMessages, getCreatedAt } from '../../sdk/message';
 import type { SerializedMessageList } from '../../types/runtime/message-list';
+import type { ContextBudgetOptions } from '../../types/sdk/agent';
 import type { AgentDbMessage, AgentMessage, ContentToolCall } from '../../types/sdk/message';
 import type { JSONValue } from '../../types/utils/json';
 import { stringifyError } from '../loop/runtime-helpers';
@@ -288,16 +290,24 @@ export class AgentMessageList {
 		baseInstructions: string,
 		instructionProviderOptions?: ProviderOptions,
 		volatileInstructions?: string,
+		contextBudget?: ContextBudgetOptions,
+		tools?: ToolSet,
 	): LlmContext {
+		const system = buildSystemMessages(
+			baseInstructions,
+			this.observationLogMemory,
+			instructionProviderOptions,
+			volatileInstructions,
+			this.mcpConnectionNote,
+		);
+		const llmMessages = filterLlmMessages(stripOrphanedToolMessages(this.all));
+		const messages = contextBudget
+			? budgetAgentMessages({ messages: llmMessages, system, tools, options: contextBudget })
+			: llmMessages;
+
 		return {
-			system: buildSystemMessages(
-				baseInstructions,
-				this.observationLogMemory,
-				instructionProviderOptions,
-				volatileInstructions,
-				this.mcpConnectionNote,
-			),
-			messages: toAiMessages(filterLlmMessages(stripOrphanedToolMessages(this.all))),
+			system,
+			messages: toAiMessages(filterLlmMessages(stripOrphanedToolMessages(messages))),
 		};
 	}
 

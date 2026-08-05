@@ -261,11 +261,42 @@ export class AgentsBuilderService {
 			}
 		};
 
+		// Explicit builder memory profile – pulls configuration from environment variables
+		// with sensible defaults. Mirrors the original patch intent while avoiding reliance on a
+		// non‑existent utility function.
+		function readPositiveIntegerEnv(name: string, fallback: number): number {
+			const raw = process.env[name];
+			if (!raw) return fallback;
+			const parsed = Number(raw);
+			return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+		}
+
+		const maxInputTokens = readPositiveIntegerEnv('N8N_AI_BUILDER_MAX_INPUT_TOKENS', 28_672);
+		const maxToolResultTokens = readPositiveIntegerEnv('N8N_AI_BUILDER_TOOL_RESULT_TOKENS', 2_048);
+		const minimumRecentTurns = readPositiveIntegerEnv('N8N_AI_BUILDER_MIN_RECENT_TURNS', 2);
+		const observerThresholdTokens = readPositiveIntegerEnv('N8N_AI_BUILDER_OBSERVER_TOKENS', 6_000);
+		const reflectorThresholdTokens = readPositiveIntegerEnv(
+			'N8N_AI_BUILDER_REFLECTOR_TOKENS',
+			6_500,
+		);
+		const renderTokenBudget = readPositiveIntegerEnv('N8N_AI_BUILDER_MEMORY_RENDER_TOKENS', 7_000);
+		const maxIterations = readPositiveIntegerEnv('N8N_AI_BUILDER_MAX_ITERATIONS', 30);
+
 		const builderMemory = new Memory()
 			.storage(this.n8nMemory.getImplementation(agentId))
 			.observationalMemory({
-				observe: createObservationLogObserveFn(modelConfig, { onUsage: onMemoryUsage }),
-				reflect: createObservationLogReflectFn(modelConfig, { onUsage: onMemoryUsage }),
+				observerThresholdTokens,
+				reflectorThresholdTokens: Math.max(
+					1,
+					Math.min(reflectorThresholdTokens, renderTokenBudget - 1),
+				),
+				renderTokenBudget,
+				observe: createObservationLogObserveFn(modelConfig, {
+					onUsage: onMemoryUsage,
+				}),
+				reflect: createObservationLogReflectFn(modelConfig, {
+					onUsage: onMemoryUsage,
+				}),
 			});
 
 		const builder = new Agent('agent-builder')
@@ -275,7 +306,14 @@ export class AgentsBuilderService {
 			.skills(runtimeSkills)
 			.memory(builderMemory)
 			.checkpoint(this.n8nCheckpointStorage.getStorage(agentId))
-			.configuration({ maxIterations: 30 });
+			.configuration({
+				maxIterations,
+				contextBudget: {
+					maxInputTokens,
+					maxToolResultTokens,
+					minimumRecentTurns,
+				},
+			});
 
 		if (session.telemetry) builder.telemetry(session.telemetry);
 		if (session.memoryTaskObserver) builder.memoryTaskObserver(session.memoryTaskObserver);
