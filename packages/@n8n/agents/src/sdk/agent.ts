@@ -798,17 +798,19 @@ export class Agent implements BuiltAgent, AgentBuilder {
 		options: ResumeOptions & ExecutionOptions,
 	): Promise<GenerateResult | StreamResult> {
 		const config = await this.ensureBuilt();
+		const defaultedOptions = this.mergeWithDefaults(options);
+		const mergedOptions = defaultedOptions ? { ...options, ...defaultedOptions } : options;
 		if (method === 'generate') {
-			const active = this.createRuntime(config, options.runId);
+			const active = this.createRuntime(config, mergedOptions.runId);
 			try {
-				return await active.runtime.resume('generate', data, options);
+				return await active.runtime.resume('generate', data, mergedOptions);
 			} finally {
 				await this.cleanupRuntime(active);
 			}
 		}
-		const active = this.createRuntime(config, options.runId);
+		const active = this.createRuntime(config, mergedOptions.runId);
 		try {
-			const result = await active.runtime.resume('stream', data, options);
+			const result = await active.runtime.resume('stream', data, mergedOptions);
 			return { ...result, stream: this.trackStreamRuntime(result.stream, active) };
 		} catch (error) {
 			await this.cleanupRuntime(active);
@@ -826,9 +828,11 @@ export class Agent implements BuiltAgent, AgentBuilder {
 		options: { runId: string; contextNotes?: string[] } & ExecutionOptions,
 	): Promise<StreamResult> {
 		const config = await this.ensureBuilt();
-		const active = this.createRuntime(config, options.runId);
+		const defaultedOptions = this.mergeWithDefaults(options);
+		const mergedOptions = defaultedOptions ? { ...options, ...defaultedOptions } : options;
+		const active = this.createRuntime(config, mergedOptions.runId);
 		try {
-			const result = await active.runtime.crashResume(options);
+			const result = await active.runtime.crashResume(mergedOptions);
 			return { ...result, stream: this.trackStreamRuntime(result.stream, active) };
 		} catch (error) {
 			await this.cleanupRuntime(active);

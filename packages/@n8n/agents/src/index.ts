@@ -73,6 +73,7 @@ export type {
 	McpVerifyResult,
 	ModelConfig,
 	ExecutionOptions,
+	ContextBudgetOptions,
 	SmoothStreamOptions,
 	TokenUsage,
 	AgentExecutionCounter,

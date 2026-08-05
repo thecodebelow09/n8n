@@ -858,6 +858,8 @@ export class AgentRuntime {
 				effectiveInstructions,
 				instructionProviderOptions,
 				volatileInstructions,
+				options?.contextBudget,
+				aiTools,
 			);
 			// Runtime breakpoints (conversation history, static tools) are per-call
 			// only — never persisted back to the message list or tool set.
