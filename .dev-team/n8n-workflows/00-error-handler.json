@@ -1,0 +1,99 @@
+{
+  "id": "b4327e7797f3223e",
+  "name": "Dev Team \u2014 Failure Handler",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        0
+      ],
+      "id": "335e9308-a887-4653-8518-01a1313b0114",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $json.execution || $json;\nreturn [{json:{\n  issueNumber: e?.data?.resultData?.error?.issueNumber ?? e?.issueNumber ?? null,\n  workflow: $json.workflow,\n  execution: $json.execution,\n  error: e?.data?.resultData?.error?.message ?? e?.error?.message ?? 'Unknown n8n workflow failure',\n  stage: 'n8n-error-workflow'\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -250,
+        0
+      ],
+      "id": "121a1612-3413-4f60-9c5a-40b5feacab94",
+      "name": "Prepare Failure"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DEV_TEAM_RUNNER_URL + '/v1/jobs' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.DEV_TEAM_RUNNER_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ action: 'failure.handle', payload: $json }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "20250bf1-81d9-479f-a6d4-c86af1e953fa",
+      "name": "Submit failure.handle"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Failure": {
+      "main": [
+        [
+          {
+            "node": "Submit failure.handle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "4b237c5b-0bf1-417c-b330-1f2ed7acfb6f",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": []
+}
