@@ -1,0 +1,889 @@
+{
+  "id": "4759b02be52120ce",
+  "name": "Dev Team \u2014 Orchestrator",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -900,
+        -120
+      ],
+      "id": "7e7f0678-19f7-4b91-953d-be0d230429ca",
+      "name": "Manual Start"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -900,
+        120
+      ],
+      "id": "a6944edf-fc8c-41d0-a6b2-eba6dc16f2af",
+      "name": "Every 5 Minutes"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DEV_TEAM_RUNNER_URL + '/v1/github/ready?repo=' + encodeURIComponent($env.DEV_TEAM_GITHUB_REPO) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.DEV_TEAM_RUNNER_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -650,
+        0
+      ],
+      "id": "788201ce-dff3-4af2-9bdc-fc0ec16683ef",
+      "name": "Fetch Ready Issues"
+    },
+    {
+      "parameters": {
+        "jsCode": "const issues = $input.first().json.issues || [];\nreturn issues.map(issue => ({json:issue}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        0
+      ],
+      "id": "a7999085-eb32-49c5-b01d-d0ee651ab7e9",
+      "name": "Split Issues"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "2087614900997dc7",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -150,
+        0
+      ],
+      "id": "14d80395-2a52-49c2-a52d-6ed4f1c60d95",
+      "name": "Intake"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "99c88564-8222-44c8-9df4-6938c4e7c710",
+              "leftValue": "={{ $json.continue !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        110,
+        0
+      ],
+      "id": "027ff2e6-47f3-4065-ab54-072507856505",
+      "name": "Continue after Intake"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "2ffd22691a56ce68",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        310,
+        0
+      ],
+      "id": "159fe9b4-1e7d-4f81-90cc-3e21805970fa",
+      "name": "Plan and Spec"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9fb48485-9882-4034-a1cc-8a14729e862c",
+              "leftValue": "={{ $json.continue !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        570,
+        0
+      ],
+      "id": "8c685307-57ed-4fe5-96c2-e1a91c2e8129",
+      "name": "Continue after Plan and Spec"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "27d5801d9c6c0129",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        770,
+        0
+      ],
+      "id": "526983d1-9429-44ef-b459-f12899515829",
+      "name": "Implement"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e96c5304-400f-4e9b-a98d-6391e1e681ad",
+              "leftValue": "={{ $json.continue !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1030,
+        0
+      ],
+      "id": "a555f497-5cc7-4eba-ad7e-cdf6dab37a81",
+      "name": "Continue after Implement"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "af45d5b9d80e2b4a",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1230,
+        0
+      ],
+      "id": "facf4922-61f7-445e-a19c-7cd05ef26695",
+      "name": "Validate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2a311e91-5c2c-4a17-8f48-e942e245ea76",
+              "leftValue": "={{ $json.continue !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1490,
+        0
+      ],
+      "id": "baf48091-dfb1-43e7-bacd-21001c4332c0",
+      "name": "Continue after Validate"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "8c43229b4fef355a",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1690,
+        0
+      ],
+      "id": "3db0e874-e971-46f4-b783-4e36241e7536",
+      "name": "Review"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "629366fd-8bc8-4fdb-ab56-630a43480233",
+              "leftValue": "={{ $json.continue !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1950,
+        0
+      ],
+      "id": "b263e3ca-0d94-4a96-9202-a197edb5d666",
+      "name": "Continue after Review"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "45c31bc2e4b396b2",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2150,
+        0
+      ],
+      "id": "65b879db-a10b-4e26-8499-b7eb5efad0d2",
+      "name": "Create PR"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f27e3bf9-b171-4d4c-84f4-40c01f7adaa5",
+              "leftValue": "={{ $json.continue !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2410,
+        0
+      ],
+      "id": "4d1e25df-f740-40a0-8c5e-034dd6b701cd",
+      "name": "Continue after Create PR"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "29d29422d7d20a95",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2610,
+        0
+      ],
+      "id": "e427cc59-ce4f-45e3-b2a1-0277437b4433",
+      "name": "Stage"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "587b4e24-4647-48cd-a3b9-92c6d07471b6",
+              "leftValue": "={{ $json.continue !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2870,
+        0
+      ],
+      "id": "5926825f-491f-4aef-9a6f-729df5341c47",
+      "name": "Continue after Stage"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "5b4644314d270622",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3070,
+        0
+      ],
+      "id": "bfc9bfc8-9627-4bd9-b102-1e89e95cd231",
+      "name": "Release Gate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0a76ba54-149b-4b4d-8da5-990138a89ffe",
+              "leftValue": "={{ $json.continue !== false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3330,
+        0
+      ],
+      "id": "0b11e891-d445-4acf-86bf-af27e5421a77",
+      "name": "Continue after Release Gate"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "daf774014e0fada3",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3530,
+        0
+      ],
+      "id": "c9277e91-d57a-4ebf-b27b-811dd25818f3",
+      "name": "Sync Project"
+    }
+  ],
+  "connections": {
+    "Manual Start": {
+      "main": [
+        [
+          {
+            "node": "Fetch Ready Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Ready Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Ready Issues": {
+      "main": [
+        [
+          {
+            "node": "Split Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Issues": {
+      "main": [
+        [
+          {
+            "node": "Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intake": {
+      "main": [
+        [
+          {
+            "node": "Continue after Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue after Intake": {
+      "main": [
+        [
+          {
+            "node": "Plan and Spec",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan and Spec": {
+      "main": [
+        [
+          {
+            "node": "Continue after Plan and Spec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue after Plan and Spec": {
+      "main": [
+        [
+          {
+            "node": "Implement",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Implement": {
+      "main": [
+        [
+          {
+            "node": "Continue after Implement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue after Implement": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Continue after Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue after Validate": {
+      "main": [
+        [
+          {
+            "node": "Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review": {
+      "main": [
+        [
+          {
+            "node": "Continue after Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue after Review": {
+      "main": [
+        [
+          {
+            "node": "Create PR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create PR": {
+      "main": [
+        [
+          {
+            "node": "Continue after Create PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue after Create PR": {
+      "main": [
+        [
+          {
+            "node": "Stage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage": {
+      "main": [
+        [
+          {
+            "node": "Continue after Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue after Stage": {
+      "main": [
+        [
+          {
+            "node": "Release Gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Gate": {
+      "main": [
+        [
+          {
+            "node": "Continue after Release Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue after Release Gate": {
+      "main": [
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sync Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": "b4327e7797f3223e"
+  },
+  "versionId": "d37df393-4b46-4776-93ce-0d04661f2347",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": []
+}

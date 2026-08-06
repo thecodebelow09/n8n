@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "maxRepairAttempts": 2,
+  "approvalLabels": {
+    "staging": "human:staging-approved",
+    "merge": "human:merge-approved"
+  },
+  "validationProfiles": {
+    "quick": [
+      "git diff --check",
+      "pnpm --filter @n8n/agents typecheck",
+      "pnpm --filter n8n typecheck"
+    ],
+    "full": [
+      "git diff --check",
+      "pnpm --filter @n8n/agents test",
+      "pnpm --filter @n8n/agents typecheck",
+      "pnpm --filter @n8n/agents build",
+      "pnpm --filter n8n typecheck",
+      "pnpm --filter n8n build"
+    ]
+  }
+}

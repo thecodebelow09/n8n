@@ -1,0 +1,171 @@
+{
+  "id": "94f054eba8a4cab6",
+  "name": "Dev Team \u2014 Job Poller",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -500,
+        0
+      ],
+      "id": "2880e5e8-1a0e-4a5b-8ebe-2499b44bdf13",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -250,
+        0
+      ],
+      "id": "9e9fc189-1507-4184-8afb-02ff9e84d59c",
+      "name": "Wait Before Poll"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DEV_TEAM_RUNNER_URL + '/v1/jobs/' + ($json.jobId || $json.id) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.DEV_TEAM_RUNNER_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "fc71f94f-7303-4cc4-9faa-c47233d6a296",
+      "name": "Get Job"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0a3fcd8c-d99f-41e9-8123-b0ba0b4980d8",
+              "leftValue": "={{ ['queued','running'].includes($json.status) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        250,
+        0
+      ],
+      "id": "c453aa52-723a-469a-9f26-83497ef4e25a",
+      "name": "Still Running?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = $input.first().json;\nif (job.status === 'failed') {\n  const error = new Error(job.error || 'Dev Team runner job failed');\n  error.issueNumber = job.context?.issueNumber;\n  throw error;\n}\nreturn [{json:{...(job.context || {}), ...(job.result || {}), jobId: job.id, jobStatus: job.status}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        120
+      ],
+      "id": "1f5bfc78-f1e4-4a1b-81b1-178849a6d53e",
+      "name": "Return Job Result"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before Poll": {
+      "main": [
+        [
+          {
+            "node": "Get Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Job": {
+      "main": [
+        [
+          {
+            "node": "Still Running?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Running?": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Poll",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Job Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": "b4327e7797f3223e"
+  },
+  "versionId": "dffa6d4b-f729-43c2-b8f2-07b3d95a85b9",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": []
+}

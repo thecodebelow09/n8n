@@ -1,0 +1,35 @@
+name: Dev Team implementation task
+description: A deterministic, agent-ready engineering task
+title: "[Dev Team] "
+labels: ["agent:ready", "risk:medium"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is failing and what evidence proves it?
+    validations: { required: true }
+  - type: textarea
+    id: desired
+    attributes:
+      label: Desired behavior
+      description: What deterministic behavior should replace it?
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable pass/fail requirements.
+    validations: { required: true }
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Focused tests, full tests, typechecks, builds, and staging scenarios.
+    validations: { required: true }
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and rollback
+      description: State mutation, idempotency, checkpoint, upgrade, and rollback concerns.
+    validations: { required: true }
