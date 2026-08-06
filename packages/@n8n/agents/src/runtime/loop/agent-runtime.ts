@@ -45,6 +45,8 @@ import type {
 } from '../../types';
 import { AgentEvent } from '../../types/runtime/event';
 import type {
+	CompletionObligationOptions,
+	CompletionObligationToolMatcher,
 	ExecutionOptions,
 	ModelConfig,
 	PersistedExecutionOptions,
@@ -77,6 +79,7 @@ import {
 	type PendingResume,
 	type ToolBatchContext,
 	type ToolCallBatchResult,
+	type ToolCallSuccess,
 } from '../tools/tool-call-executor';
 
 export interface AgentRuntimeConfig {
@@ -156,6 +159,63 @@ const EMPTY_MESSAGE_LIST: SerializedMessageList = {
 };
 
 type RuntimeExecutionOptions = RunOptions & ExecutionOptions & { iterationCount?: number };
+
+type ObligationToolCall = Pick<ToolCallSuccess, 'toolName' | 'input' | 'toolEntry'>;
+
+function matchesScalar(
+	value: unknown,
+	allowed: CompletionObligationToolMatcher['inputValues'],
+): boolean {
+	return allowed?.some((candidate) => Object.is(candidate, value)) ?? false;
+}
+
+function matchesCompletionObligationTool(
+	call: ObligationToolCall,
+	matcher: CompletionObligationToolMatcher,
+): boolean {
+	if (call.toolName !== matcher.toolName) return false;
+
+	if (matcher.inputField) {
+		if (!call.input || typeof call.input !== 'object' || Array.isArray(call.input)) return false;
+		if (!matchesScalar(Reflect.get(call.input, matcher.inputField), matcher.inputValues)) {
+			return false;
+		}
+	}
+
+	const hasOutputConstraint =
+		matcher.outputField !== undefined ||
+		matcher.outputValues !== undefined ||
+		matcher.outputStringPrefixes !== undefined ||
+		matcher.outputNumberMinimum !== undefined;
+	if (!hasOutputConstraint) return true;
+	if (!matcher.outputField) return false;
+
+	const output = call.toolEntry.output;
+	if (!output || typeof output !== 'object' || Array.isArray(output)) return false;
+	const value = Reflect.get(output, matcher.outputField);
+
+	if (matchesScalar(value, matcher.outputValues)) return true;
+	if (
+		typeof value === 'string' &&
+		matcher.outputStringPrefixes?.some((prefix) => value.startsWith(prefix))
+	) {
+		return true;
+	}
+	return (
+		typeof value === 'number' &&
+		matcher.outputNumberMinimum !== undefined &&
+		value >= matcher.outputNumberMinimum
+	);
+}
+
+function batchSatisfiesCompletionObligation(
+	batch: ToolCallBatchResult,
+	obligation: CompletionObligationOptions,
+): boolean {
+	return batch.results.some((call) =>
+		obligation.satisfyingTools.some((matcher) => matchesCompletionObligationTool(call, matcher)),
+	);
+}
 
 /** Shared input for the private generate/stream loops. */
 interface LoopContext {
@@ -412,9 +472,14 @@ export class AgentRuntime {
 			}
 
 			const mergedMaxIterations = callerMaxIterations ?? persistedMaxIterations;
+			const mergedCompletionObligation =
+				callerExecOptions.completionObligation ?? persisted.completionObligation;
 			const mergedExecOptions: ExecutionOptions & { iterationCount?: number } = {
 				...callerExecOptions,
 				...(mergedMaxIterations !== undefined ? { maxIterations: mergedMaxIterations } : {}),
+				...(mergedCompletionObligation !== undefined
+					? { completionObligation: mergedCompletionObligation }
+					: {}),
 				...(state.iterationCount !== undefined ? { iterationCount: state.iterationCount } : {}),
 			};
 
@@ -550,10 +615,15 @@ export class AgentRuntime {
 				);
 			}
 			const mergedMaxIterations = callerMaxIterations ?? persistedMaxIterations;
+			const mergedCompletionObligation =
+				callerExecOptions.completionObligation ?? persisted.completionObligation;
 			const resumeOptions: RuntimeExecutionOptions = {
 				persistence: state.persistence,
 				...callerExecOptions,
 				...(mergedMaxIterations !== undefined ? { maxIterations: mergedMaxIterations } : {}),
+				...(mergedCompletionObligation !== undefined
+					? { completionObligation: mergedCompletionObligation }
+					: {}),
 				...(state.iterationCount !== undefined ? { iterationCount: state.iterationCount } : {}),
 			};
 
@@ -769,6 +839,12 @@ export class AgentRuntime {
 			: 0;
 		// Consecutive corrective retries used since the most recent successful tool turn.
 		let emptyCompletionRetriesUsed = 0;
+		let completionObligation = options?.completionObligation;
+		const configuredObligationRetries = completionObligation?.maxRetries ?? 2;
+		const completionObligationMaxRetries = Number.isFinite(configuredObligationRetries)
+			? Math.max(0, Math.floor(configuredObligationRetries))
+			: 2;
+		let completionObligationRetriesUsed = 0;
 		// One-shot corrective instruction for the next model call only.
 		let correctiveInstruction: string | undefined;
 		let iterationCount = options?.iterationCount ?? 0;
@@ -807,6 +883,7 @@ export class AgentRuntime {
 					totalUsage,
 					maxIterations,
 					nextIteration,
+					completionObligation,
 				);
 				this.assertNotAborted(abortScope);
 				const result = await sink.finishSuspended({
@@ -844,6 +921,10 @@ export class AgentRuntime {
 				...buildToolBatchContext(pendingLoopContext.toolMap),
 				pendingResume,
 			});
+			if (completionObligation && batchSatisfiesCompletionObligation(batch, completionObligation)) {
+				completionObligation = undefined;
+			}
+			if (batch.results.length > 0) completionObligationRetriesUsed = 0;
 			const finalized = await finishToolBatch(batch, pendingLoopContext.toolMap, iterationCount);
 			if (finalized.suspended) return finalized.result;
 		}
@@ -960,6 +1041,38 @@ ${volatileInstructions}`
 				continue;
 			}
 
+			if (turn.aiFinishReason !== 'tool-calls' && completionObligation) {
+				if (turn.errorReason) throw new Error(turn.errorReason.message);
+				this.emitTurnEnd(turn.newMessages, extractSettledToolCalls(turn.newMessages));
+
+				if (completionObligationRetriesUsed >= completionObligationMaxRetries) {
+					throw new Error(
+						`The model repeatedly described the requested action without completing a qualifying action, plan, or blocker tool after ${completionObligationMaxRetries} corrective retry(s).`,
+					);
+				}
+
+				// maxIterations remains the hard cap. Keep the narration in history/UI,
+				// but do not make another model call when no iteration budget remains.
+				if (iterationCount + 1 >= maxIterations) continue;
+
+				const retryNumber = completionObligationRetriesUsed + 1;
+				this.eventBus.emit({
+					type: AgentEvent.ActionCompletionRequired,
+					retryNumber,
+					maxRetries: completionObligationMaxRetries,
+					iteration: iterationCount,
+					requiredToolNames: [
+						...new Set(completionObligation.satisfyingTools.map((matcher) => matcher.toolName)),
+					],
+				});
+
+				completionObligationRetriesUsed = retryNumber;
+				correctiveInstruction =
+					completionObligation.correctiveInstruction ??
+					'You described the requested action but did not complete it. Continue the same task now. Narration is allowed, but do not finish until you have successfully called a qualifying action tool, persisted a plan, or requested genuinely missing information with the appropriate tool. Do not repeat the plan as a final answer.';
+				continue;
+			}
+
 			if (turn.aiFinishReason !== 'tool-calls') {
 				// A rejected/filtered request (e.g. a provider prompt safety block)
 				// surfaces as an output-less turn instead of an SDK error — throw so
@@ -978,6 +1091,10 @@ ${volatileInstructions}`
 				...buildToolBatchContext(toolMap),
 				toolCalls: turn.toolCalls,
 			});
+			if (completionObligation && batchSatisfiesCompletionObligation(batch, completionObligation)) {
+				completionObligation = undefined;
+			}
+			if (batch.results.length > 0) completionObligationRetriesUsed = 0;
 			const finalized = await finishToolBatch(batch, toolMap, iterationCount + 1);
 			if (finalized.suspended) return finalized.result;
 
@@ -993,6 +1110,7 @@ ${volatileInstructions}`
 					options,
 					maxIterations,
 					iterationCount + 1,
+					completionObligation,
 				);
 			}
 		}
@@ -1096,13 +1214,21 @@ ${volatileInstructions}`
 		totalUsage: TokenUsage | undefined,
 		maxIterations?: number,
 		iterationCount?: number,
+		completionObligation?: CompletionObligationOptions,
 	): Promise<void> {
 		// Persist loop controls only. providerOptions are intentionally excluded
 		// because they may contain sensitive data (API keys, auth headers).
 		const resolvedMaxIterations = maxIterations ?? options?.maxIterations;
 		const resolvedIterationCount = iterationCount ?? options?.iterationCount;
 		const executionOptions: PersistedExecutionOptions | undefined =
-			resolvedMaxIterations !== undefined ? { maxIterations: resolvedMaxIterations } : undefined;
+			resolvedMaxIterations !== undefined || completionObligation !== undefined
+				? {
+						...(resolvedMaxIterations !== undefined
+							? { maxIterations: resolvedMaxIterations }
+							: {}),
+						...(completionObligation !== undefined ? { completionObligation } : {}),
+					}
+				: undefined;
 
 		const state: SerializableAgentState = {
 			persistence: options?.persistence,
@@ -1114,7 +1240,7 @@ ${volatileInstructions}`
 			...(resolvedIterationCount !== undefined ? { iterationCount: resolvedIterationCount } : {}),
 		};
 		await this.runState.suspend(this.runId, state);
-		this.updateState({ status: 'suspended', pendingToolCalls, messageList: list.serialize() });
+		this.updateState(state);
 		await this.memory.persistTurnDelta(list, options);
 	}
 
@@ -1132,11 +1258,19 @@ ${volatileInstructions}`
 		options: RuntimeExecutionOptions | undefined,
 		maxIterations?: number,
 		iterationCount?: number,
+		completionObligation?: CompletionObligationOptions,
 	): Promise<void> {
 		const resolvedMaxIterations = maxIterations ?? options?.maxIterations;
 		const resolvedIterationCount = iterationCount ?? options?.iterationCount;
 		const executionOptions: PersistedExecutionOptions | undefined =
-			resolvedMaxIterations !== undefined ? { maxIterations: resolvedMaxIterations } : undefined;
+			resolvedMaxIterations !== undefined || completionObligation !== undefined
+				? {
+						...(resolvedMaxIterations !== undefined
+							? { maxIterations: resolvedMaxIterations }
+							: {}),
+						...(completionObligation !== undefined ? { completionObligation } : {}),
+					}
+				: undefined;
 
 		const state: SerializableAgentState = {
 			persistence: options?.persistence,

@@ -130,6 +130,10 @@ import { EvalThreadCredentialAllowlistService } from './eval/thread-credential-a
 import { DurableEventLog } from './event-bus/durable-event-log';
 import { InProcessEventBus } from './event-bus/in-process-event-bus';
 import { InterruptedRunSweeper } from './event-bus/interrupted-run-sweeper';
+import {
+	createWorkflowActionObligation,
+	readActionObligationRetries,
+} from './instance-ai-action-obligation';
 import { InstanceAiCreditService } from './instance-ai-credit.service';
 import {
 	getAgentErrorSeverity,
@@ -954,12 +958,19 @@ export class InstanceAiService {
 		threadId: string,
 		runId: string,
 		signal: AbortSignal,
+		message: string,
 	): Record<string, unknown> {
 		if (this.isRunDebugEnabled()) {
 			this.runDebugBuffer.ensure(runId, threadId);
 		}
+		const completionObligation = createWorkflowActionObligation(
+			message,
+			readActionObligationRetries(process.env['N8N_INSTANCE_AI_ACTION_OBLIGATION_RETRIES'], 2),
+		);
+
 		return {
 			maxIterations: MAX_STEPS.ORCHESTRATOR,
+			...(completionObligation ? { completionObligation } : {}),
 			abortSignal: signal,
 			// Recover token usage from raw provider events so a stopped/errored run
 			// is still billed for the tokens consumed before the stop.
@@ -3688,7 +3699,13 @@ export class InstanceAiService {
 				tracing,
 			);
 
-			const streamOptions = this.buildOrchestratorAgentStreamOptions(user, threadId, runId, signal);
+			const streamOptions = this.buildOrchestratorAgentStreamOptions(
+				user,
+				threadId,
+				runId,
+				signal,
+				message,
+			);
 
 			streamReached = true;
 			const result = tracing

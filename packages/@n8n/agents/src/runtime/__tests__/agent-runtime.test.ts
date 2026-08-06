@@ -7673,4 +7673,256 @@ describe('AgentRuntime — MCP connection failure warnings', () => {
 			expect(result.finishReason).toBe('max-iterations');
 		});
 	});
+
+	// ---------------------------------------------------------------------------
+	// Action completion obligation
+	// ---------------------------------------------------------------------------
+
+	describe('AgentRuntime — action completion obligation', () => {
+		function textResponse(text: string): unknown {
+			return {
+				finishReason: 'stop',
+				usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+				response: {
+					messages: [{ role: 'assistant', content: [{ type: 'text', text }] }],
+				},
+				toolCalls: [],
+			};
+		}
+
+		let toolCallSequence = 0;
+		function toolResponse(toolName: string, input: Record<string, unknown> = {}): unknown {
+			toolCallSequence += 1;
+			const toolCallId = `call-${toolName}-${toolCallSequence}`;
+			return {
+				finishReason: 'tool-calls',
+				usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+				response: {
+					messages: [
+						{
+							role: 'assistant',
+							content: [
+								{
+									type: 'tool-call',
+									toolCallId,
+									toolName,
+									input,
+								},
+							],
+						},
+					],
+				},
+				toolCalls: [{ toolCallId, toolName, input }],
+			};
+		}
+
+		it('keeps narration visible but continues until a qualifying action tool succeeds', async () => {
+			generateText.mockReset();
+			generateText
+				.mockResolvedValueOnce(textResponse('I will build the requested workflow now.'))
+				.mockResolvedValueOnce(toolResponse('build-workflow'))
+				.mockResolvedValueOnce(textResponse('The workflow is built.'));
+
+			const buildTool = new ToolBuilder('build-workflow')
+				.description('build')
+				.input(z.object({}))
+				.handler(async () => ({ success: true }))
+				.build();
+			const runtime = new AgentRuntime({
+				name: 'action-obligation',
+				model: 'openai/gpt-4o-mini',
+				instructions: 'You are a test assistant.',
+				tools: [buildTool],
+			});
+
+			const result = await runtime.generate('Create a workflow', {
+				maxIterations: 5,
+				completionObligation: {
+					kind: 'action',
+					maxRetries: 2,
+					satisfyingTools: [{ toolName: 'build-workflow' }],
+				},
+			});
+
+			expect(generateText.mock.calls).toHaveLength(3);
+			expect(result.finishReason).toBe('stop');
+			expect(JSON.stringify(result.messages)).toContain('I will build the requested workflow now.');
+			const correctiveCall = generateText.mock.calls[1]![0] as Record<string, unknown>;
+			expect(JSON.stringify(correctiveCall.instructions)).toContain(
+				'described the requested action but did not complete it',
+			);
+		});
+
+		it('supports action-field matchers for multi-action tools', async () => {
+			generateText.mockReset();
+			generateText
+				.mockResolvedValueOnce(textResponse('I will archive it.'))
+				.mockResolvedValueOnce(toolResponse('workflows', { action: 'list' }))
+				.mockResolvedValueOnce(textResponse('I found the workflow and will archive it.'))
+				.mockResolvedValueOnce(toolResponse('workflows', { action: 'delete' }))
+				.mockResolvedValueOnce(textResponse('Archived.'));
+
+			const workflowsTool = new ToolBuilder('workflows')
+				.description('workflow actions')
+				.input(z.object({ action: z.string() }))
+				.handler(async () => ({ success: true }))
+				.build();
+			const runtime = new AgentRuntime({
+				name: 'action-field-obligation',
+				model: 'openai/gpt-4o-mini',
+				instructions: 'You are a test assistant.',
+				tools: [workflowsTool],
+			});
+
+			const result = await runtime.generate('Archive the workflow', {
+				maxIterations: 7,
+				completionObligation: {
+					kind: 'action',
+					maxRetries: 2,
+					satisfyingTools: [
+						{ toolName: 'workflows', inputField: 'action', inputValues: ['delete'] },
+					],
+				},
+			});
+
+			expect(generateText.mock.calls).toHaveLength(5);
+			expect(result.finishReason).toBe('stop');
+		});
+
+		it('requires the configured successful tool output before clearing the obligation', async () => {
+			generateText.mockReset();
+			generateText
+				.mockResolvedValueOnce(textResponse('I will build it.'))
+				.mockResolvedValueOnce(toolResponse('build-workflow', { shouldSucceed: false }))
+				.mockResolvedValueOnce(textResponse('The first build failed; I will correct it.'))
+				.mockResolvedValueOnce(toolResponse('build-workflow', { shouldSucceed: true }))
+				.mockResolvedValueOnce(textResponse('The workflow is built.'));
+
+			const buildTool = new ToolBuilder('build-workflow')
+				.description('build')
+				.input(z.object({ shouldSucceed: z.boolean() }))
+				.handler(async ({ shouldSucceed }: { shouldSucceed: boolean }) => ({
+					success: shouldSucceed,
+				}))
+				.build();
+			const runtime = new AgentRuntime({
+				name: 'action-output-obligation',
+				model: 'openai/gpt-4o-mini',
+				instructions: 'You are a test assistant.',
+				tools: [buildTool],
+			});
+
+			const result = await runtime.generate('Create a workflow', {
+				maxIterations: 7,
+				completionObligation: {
+					kind: 'action',
+					maxRetries: 2,
+					satisfyingTools: [
+						{
+							toolName: 'build-workflow',
+							outputField: 'success',
+							outputValues: [true],
+						},
+					],
+				},
+			});
+
+			expect(generateText.mock.calls).toHaveLength(5);
+			expect(result.finishReason).toBe('stop');
+			const postFailureRetry = generateText.mock.calls[3]![0] as Record<string, unknown>;
+			expect(JSON.stringify(postFailureRetry.instructions)).toContain(
+				'described the requested action but did not complete it',
+			);
+		});
+
+		it('preserves the obligation while a qualifying action waits for approval', async () => {
+			generateText.mockReset();
+			generateText.mockResolvedValueOnce(toolResponse('build-workflow', { value: 'draft' }));
+
+			const buildTool = makeSuspendingTool('build-workflow', async (_input, ctx) => {
+				return await ctx.suspend({ reason: 'needs approval' });
+			});
+			const { runtime } = createRuntimeWithTools([buildTool], 1);
+			const completionObligation = {
+				kind: 'action' as const,
+				maxRetries: 2,
+				satisfyingTools: [{ toolName: 'build-workflow' }],
+			};
+
+			const result = await runtime.generate('Create a workflow', {
+				maxIterations: 5,
+				completionObligation,
+			});
+
+			expect(result.pendingSuspend).toHaveLength(1);
+			expect(runtime.getState().executionOptions?.completionObligation).toEqual(
+				completionObligation,
+			);
+		});
+
+		it('returns a clear error after repeated narration-only completions', async () => {
+			generateText.mockReset();
+			generateText
+				.mockResolvedValueOnce(textResponse('I will do it.'))
+				.mockResolvedValueOnce(textResponse('Here is my plan.'))
+				.mockResolvedValueOnce(textResponse('I am still planning.'));
+			const { runtime } = createRuntime();
+
+			const result = await runtime.generate('Create a workflow', {
+				maxIterations: 6,
+				completionObligation: {
+					kind: 'action',
+					maxRetries: 2,
+					satisfyingTools: [{ toolName: 'build-workflow' }],
+				},
+			});
+
+			expect(generateText.mock.calls).toHaveLength(3);
+			expect(result.finishReason).toBe('error');
+			expect(String(result.error)).toContain('described the requested action');
+		});
+
+		it('emits a diagnostic event without prompt content', async () => {
+			generateText.mockReset();
+			generateText
+				.mockResolvedValueOnce(textResponse('I will do it.'))
+				.mockResolvedValueOnce(toolResponse('build-workflow'))
+				.mockResolvedValueOnce(textResponse('Done.'));
+
+			const buildTool = new ToolBuilder('build-workflow')
+				.description('build')
+				.input(z.object({}))
+				.handler(async () => ({ success: true }))
+				.build();
+			const { bus } = createRuntime();
+			const runtime = new AgentRuntime({
+				name: 'action-event',
+				model: 'openai/gpt-4o-mini',
+				instructions: 'You are a test assistant.',
+				tools: [buildTool],
+				eventBus: bus,
+			});
+			const events: unknown[] = [];
+			bus.on(AgentEvent.ActionCompletionRequired, (event) => events.push(event));
+
+			const result = await runtime.generate('Create secret workflow', {
+				maxIterations: 5,
+				completionObligation: {
+					kind: 'action',
+					maxRetries: 2,
+					satisfyingTools: [{ toolName: 'build-workflow' }],
+				},
+			});
+
+			expect(result.finishReason).toBe('stop');
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({
+				type: AgentEvent.ActionCompletionRequired,
+				retryNumber: 1,
+				maxRetries: 2,
+				requiredToolNames: ['build-workflow'],
+			});
+			expect(JSON.stringify(events[0])).not.toContain('secret');
+		});
+	});
 });

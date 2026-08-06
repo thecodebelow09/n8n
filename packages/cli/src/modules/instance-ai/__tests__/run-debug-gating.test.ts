@@ -11,6 +11,7 @@ type RunDebugGatingInternals = {
 		threadId: string,
 		runId: string,
 		signal: AbortSignal,
+		message: string,
 	) => Record<string, unknown>;
 	buildOrchestratorResumeAgentOptions: (
 		user: User,
@@ -44,6 +45,7 @@ describe('InstanceAiService run debug gating', () => {
 			threadId,
 			runId,
 			signal,
+			'Explain this workflow.',
 		);
 		const resumeOptions = service.buildOrchestratorResumeAgentOptions(
 			user,
@@ -75,6 +77,20 @@ describe('InstanceAiService run debug gating', () => {
 		expect(resumeOptions.providerOptions).toEqual(cacheDirective);
 	});
 
+	it('attaches an action completion obligation for strong workflow action requests', () => {
+		const service = createRunDebugGatingService(false);
+
+		const streamOptions = service.buildOrchestratorAgentStreamOptions(
+			user,
+			threadId,
+			runId,
+			signal,
+			'Create a workflow with a Manual Trigger node.',
+		);
+
+		expect(streamOptions.completionObligation).toEqual(expect.objectContaining({ kind: 'action' }));
+	});
+
 	it('attaches step hooks and creates run records when run debug is enabled', () => {
 		const service = createRunDebugGatingService(true);
 
@@ -83,6 +99,7 @@ describe('InstanceAiService run debug gating', () => {
 			threadId,
 			runId,
 			signal,
+			'Explain this workflow.',
 		);
 		const resumeOptions = service.buildOrchestratorResumeAgentOptions(
 			user,

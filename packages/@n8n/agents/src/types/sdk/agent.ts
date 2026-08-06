@@ -175,6 +175,36 @@ export interface AgentExecutionCounter {
 	incrementTokenCount(tokenCount: number): void;
 }
 
+export type CompletionObligationScalar = string | number | boolean | null;
+
+export interface CompletionObligationToolMatcher {
+	/** Tool name whose completed execution can satisfy the obligation. */
+	toolName: string;
+	/** Optional top-level input field to inspect (for multi-action tools). */
+	inputField?: string;
+	/** Allowed scalar values when inputField is set. */
+	inputValues?: CompletionObligationScalar[];
+	/** Optional top-level raw tool-output field to inspect. */
+	outputField?: string;
+	/** Allowed scalar values for outputField. */
+	outputValues?: CompletionObligationScalar[];
+	/** Allowed string prefixes for outputField. */
+	outputStringPrefixes?: string[];
+	/** Minimum accepted numeric value for outputField. */
+	outputNumberMinimum?: number;
+}
+
+export interface CompletionObligationOptions {
+	/** This first implementation enforces action-taking before a run may finish. */
+	kind: 'action';
+	/** Completed tool outcomes that satisfy the action, persist a plan, or record a blocker. */
+	satisfyingTools: CompletionObligationToolMatcher[];
+	/** Maximum text-only corrective retries. Defaults to 2 when omitted. */
+	maxRetries?: number;
+	/** One-shot system-only instruction used after narration-only completion. */
+	correctiveInstruction?: string;
+}
+
 export interface ContextBudgetOptions {
 	/** Approximate ceiling for system prompt, observation memory, tool schemas, and messages combined. */
 	maxInputTokens: number;
@@ -224,10 +254,19 @@ export interface ExecutionOptions {
 	 * content-filter failures are not retried.
 	 */
 	emptyCompletionRetries?: number;
+	/**
+	 * Optional run-completion obligation. When set, a text-only model turn cannot
+	 * finish the run until a matching tool has completed successfully. Narration
+	 * remains visible; the runtime injects a one-shot corrective instruction and
+	 * continues the loop.
+	 */
+	completionObligation?: CompletionObligationOptions;
 }
 
 export interface PersistedExecutionOptions {
 	maxIterations?: number;
+	/** Serializable completion obligation retained across suspend/crash resume. */
+	completionObligation?: CompletionObligationOptions;
 }
 
 export interface AnthropicPromptCachingConfig {

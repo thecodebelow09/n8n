@@ -78,6 +78,11 @@ export const enum AgentEvent {
 	 * and no tool calls, and the runtime is retrying with a corrective instruction.
 	 */
 	EmptyCompletion = 'empty_completion',
+	/**
+	 * Emitted when an action-required run tries to finish with narration only
+	 * before a qualifying action/plan/blocker tool succeeds.
+	 */
+	ActionCompletionRequired = 'action_completion_required',
 }
 
 export type AgentEventData =
@@ -125,6 +130,17 @@ export type AgentEventData =
 			promptTokens?: number;
 			/** Completion token count, when available. */
 			completionTokens?: number;
+	  }
+	| {
+			type: AgentEvent.ActionCompletionRequired;
+			/** 1-based corrective retry number being scheduled. */
+			retryNumber: number;
+			/** Maximum narration-only retries configured. */
+			maxRetries: number;
+			/** Current 0-based iteration count. */
+			iteration: number;
+			/** Tool names that can satisfy the active obligation. */
+			requiredToolNames: string[];
 	  };
 
 export type AgentEventHandler = (data: AgentEventData) => void;
