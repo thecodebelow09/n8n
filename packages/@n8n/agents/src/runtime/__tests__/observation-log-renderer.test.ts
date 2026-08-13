@@ -130,28 +130,6 @@ describe('renderObservationLog', () => {
 		expect(rendered).not.toContain('BUILDER STATE: old');
 	});
 
-	it('renders a child as a root when its parent cannot fit the token budget', () => {
-		const parent = entry({
-			id: 'parent',
-			text: 'Oversized parent',
-			tokenCount: 3,
-			createdAt: new Date(2026, 4, 12, 14, 30),
-		});
-		const child = entry({
-			id: 'child',
-			parentId: parent.id,
-			text: 'Standalone child',
-			tokenCount: 1,
-			createdAt: new Date(2026, 4, 12, 14, 31),
-		});
-
-		const rendered = renderObservationLog([parent, child], { renderTokenBudget: 1 });
-		expect(rendered).not.toBeNull();
-		expect(rendered).toContain('\n* IMPORTANT (14:31) Standalone child\n');
-		expect(rendered).not.toContain('\n  * IMPORTANT (14:31) Standalone child\n');
-		expect(rendered).not.toContain('Oversized parent');
-	});
-
 	it('applies the render token budget to active observations', () => {
 		const kept = entry({
 			id: 'kept',

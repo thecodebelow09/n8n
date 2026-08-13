@@ -130,11 +130,12 @@ export function renderObservationLog(
 			const children = childrenByParent.get(entry.parentId) ?? [];
 			children.push(indexedEntry);
 			childrenByParent.set(entry.parentId, children);
-		} else {
-			// No parent, or the parent was excluded by the token budget.
+		} else if (!entry.parentId) {
 			roots.push(indexedEntry);
 		}
 	}
+
+	if (roots.length === 0) return null;
 
 	const lines: string[] = ['<observations>', MEMORY_INTRO, MARKER_LEGEND, ''];
 	const renderedIds = new Set<string>();

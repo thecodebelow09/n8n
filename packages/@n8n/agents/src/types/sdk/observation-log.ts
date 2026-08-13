@@ -68,6 +68,10 @@ export interface ObservationLogReflectionResult {
 	inserted: ObservationLogEntry[];
 }
 
+export type TokenCounter = (text: string) => number;
+
+export const estimateObservationTokens: TokenCounter = (text) => Math.ceil(text.length / 4);
+
 export function getStoredObservationTokenCount(
 	entry: Pick<ObservationLogEntry, 'text' | 'tokenCount'>,
 ): number {
